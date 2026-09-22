@@ -1,3 +1,5 @@
+import logging
+
 import jwt
 import httpx
 from fastapi import HTTPException, Depends, status
@@ -6,6 +8,8 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .database import get_db
 from .models import User
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 
@@ -35,16 +39,16 @@ async def get_current_user_id(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token is missing Key ID (kid)",
             )
-        
+
         jwks = await get_jwks()
-        
+
         # Look for the public key that matches the token's kid
         rsa_key = None
         for key in jwks.get("keys", []):
             if key.get("kid") == kid:
                 rsa_key = jwt.algorithms.RSAAlgorithm.from_jwk(key)
                 break
-        
+
         # If not found, refresh the cached keys in case Clerk rotated them
         if not rsa_key:
             global jwks_cache
@@ -54,13 +58,13 @@ async def get_current_user_id(
                 if key.get("kid") == kid:
                     rsa_key = jwt.algorithms.RSAAlgorithm.from_jwk(key)
                     break
-        
+
         if not rsa_key:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Valid public key not found for token signature verification",
             )
-            
+
         # Decode and verify token signature/claims (with 60s leeway for client-server clock drift)
         payload = jwt.decode(
             token,
@@ -69,14 +73,14 @@ async def get_current_user_id(
             options={"verify_exp": True},
             leeway=60
         )
-        
+
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token payload is missing user ID (sub claim)",
             )
-            
+
         # Ensure user exists in our local PostgreSQL database to satisfy foreign key constraints
         db_user = db.query(User).filter(User.id == user_id).first()
         if not db_user:
@@ -87,13 +91,32 @@ async def get_current_user_id(
 
         return user_id
 
+    except HTTPException:
+        raise
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session has expired. Please sign in again.",
         )
-    except (jwt.InvalidTokenError, httpx.HTTPError, Exception) as e:
+    except jwt.InvalidTokenError as e:
+        # Log the specific reason; return a generic message so token internals
+        # and validation specifics aren't disclosed to the caller.
+        logger.warning("Rejected invalid token: %s", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Authentication failed: {str(e)}",
+            detail="Authentication failed. Please sign in again.",
+        )
+    except httpx.HTTPError as e:
+        # The identity provider is unreachable: that's an upstream failure, not
+        # a bad credential, so surface it as 503 rather than 401.
+        logger.error("Could not reach the identity provider for JWKS: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify credentials right now. Please try again shortly.",
+        )
+    except Exception as e:
+        logger.exception("Unexpected error during authentication: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication failed. Please sign in again.",
         )

@@ -4,64 +4,126 @@
    lib/theme.ts) instead of relying only on prefers-color-scheme. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ---------------------------------------------------------------------------
+   Surfaces
+
+   Cool ink rather than warm cream: the accent below is hot orange, and on a
+   warm ground the two vibrate against each other. Cool neutrals let the
+   accent stay the only loud thing on the page.
+
+   --surface        the page
+   --surface-raised cards, panels, the inspector
+   --hairline       1px structural rules; never used for text
+   --------------------------------------------------------------------------- */
 :root {
-  --background: #f4f3f1;
-  --foreground: #1b2530;
+  --background: #f7f8f8;
+  --foreground: #11161d;
+  --surface: #f7f8f8;
+  --surface-raised: #ffffff;
+  --hairline: rgba(17, 22, 29, 0.09);
 }
 
 .dark {
-  --background: #161d26;
-  --foreground: #e7e4e0;
+  --background: #0b0f14;
+  --foreground: #e8ecf0;
+  --surface: #0b0f14;
+  --surface-raised: #121820;
+  --hairline: rgba(232, 236, 240, 0.1);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-hairline: var(--hairline);
+
   --font-sans: var(--font-inter);
-  --font-display: var(--font-plex-serif);
-  --font-mono: var(--font-plex-mono);
+  --font-display: var(--font-space-grotesk);
+  --font-mono: var(--font-jetbrains-mono);
 
-  /* Slate — neutral, authoritative foundation (ink/text/structure) */
-  --color-slate-50: #f3f5f7;
-  --color-slate-100: #e3e8ed;
-  --color-slate-200: #c7d1db;
-  --color-slate-300: #a3b1c0;
-  --color-slate-400: #75879a;
-  --color-slate-500: #526478;
-  --color-slate-600: #3d4f63;
-  --color-slate-700: #2d3e50;
-  --color-slate-800: #212d3a;
-  --color-slate-900: #161d26;
+  /* Ink — cool neutral. Carries all structure, text, and surfaces. */
+  --color-ink-25: #fbfcfc;
+  --color-ink-50: #f2f4f6;
+  --color-ink-100: #e4e8ec;
+  --color-ink-200: #cbd2da;
+  --color-ink-300: #a3aeba;
+  --color-ink-400: #74818f;
+  --color-ink-500: #515e6d;
+  --color-ink-600: #3b4653;
+  --color-ink-700: #263140;
+  --color-ink-800: #18202a;
+  --color-ink-900: #11161d;
+  --color-ink-950: #0b0f14;
 
-  /* Zinc — clean warm-light surface for document cards & canvases */
-  --color-zinc-25: #fbfaf9;
-  --color-zinc-50: #f8f7f5;
-  --color-zinc-100: #f4f3f1;
-  --color-zinc-200: #e7e4e0;
-  --color-zinc-300: #d3cfc9;
-  --color-zinc-400: #a8a29b;
-  --color-zinc-500: #7c7770;
-  --color-zinc-600: #5c5852;
+  /* Ember — the one hot accent. Actions, focus, the live cursor.
+     Never used for two different meanings on the same screen. */
+  --color-ember-50: #fff3ee;
+  --color-ember-100: #ffe1d4;
+  --color-ember-200: #ffc0a6;
+  --color-ember-300: #ff9970;
+  --color-ember-400: #fd7a42;
+  --color-ember-500: #fa5d19;
+  --color-ember-600: #e04709;
+  --color-ember-700: #b53707;
+  --color-ember-800: #8c2b08;
+  --color-ember-900: #6b2409;
+  --color-ember-950: #3a1305;
 
-  /* Teal — the color of connection between documents */
-  --color-teal-50: #ecfafd;
-  --color-teal-100: #cff1f8;
-  --color-teal-200: #a2e4ef;
-  --color-teal-300: #67d0e1;
-  --color-teal-400: #34b7ce;
-  --color-teal-500: #0ea0bc;
-  --color-teal-600: #0891b2;
-  --color-teal-700: #07728c;
-  --color-teal-800: #0a5a6e;
-  --color-teal-900: #0d4a5a;
+  /* Signal — documents agree. A verdict color, not decoration. */
+  --color-signal-50: #ecfbf7;
+  --color-signal-100: #cdf4ea;
+  --color-signal-200: #9ee7d7;
+  --color-signal-300: #5fd2bd;
+  --color-signal-400: #2bb59f;
+  --color-signal-500: #109482;
+  --color-signal-600: #0b7669;
+  --color-signal-700: #0a5d54;
+  --color-signal-800: #0a4a44;
+  --color-signal-900: #0a3d38;
 
-  /* Amber and Red are close/exact matches to Tailwind's defaults
-     (amber-500 = #f59e0b, red-600 = #dc2626) so no override is needed;
-     use the built-in amber-* / red-* utilities directly. */
+  /* Alert — documents disagree. The state the product exists to surface. */
+  --color-alert-50: #fff1f3;
+  --color-alert-100: #ffe0e5;
+  --color-alert-200: #ffc4ce;
+  --color-alert-300: #fb92a4;
+  --color-alert-400: #f25f78;
+  --color-alert-500: #de3557;
+  --color-alert-600: #bd2246;
+  --color-alert-700: #9c1a3b;
+  --color-alert-800: #7d1833;
+  --color-alert-900: #67172d;
+
+  /* Semantic type scale. Named by the job, not the size, so a heading
+     can be retuned once here instead of in every file that sets text-3xl. */
+  --text-eyebrow: 0.6875rem;
+  --text-eyebrow--line-height: 1;
+  --text-eyebrow--letter-spacing: 0.14em;
+  --text-eyebrow--font-weight: 600;
+
+  --text-display-lg: 3.75rem;
+  --text-display-lg--line-height: 1.02;
+  --text-display-lg--letter-spacing: -0.032em;
+  --text-display-lg--font-weight: 600;
+
+  --text-display: 2.75rem;
+  --text-display--line-height: 1.06;
+  --text-display--letter-spacing: -0.028em;
+  --text-display--font-weight: 600;
+
+  --text-title: 1.75rem;
+  --text-title--line-height: 1.16;
+  --text-title--letter-spacing: -0.02em;
+  --text-title--font-weight: 600;
+
+  --text-heading: 1.0625rem;
+  --text-heading--line-height: 1.4;
+  --text-heading--letter-spacing: -0.011em;
+  --text-heading--font-weight: 600;
 }
 
 * {
-  scrollbar-color: rgba(45, 62, 80, 0.25) transparent;
+  scrollbar-color: rgba(38, 49, 64, 0.22) transparent;
   scrollbar-width: thin;
 }
 
@@ -71,16 +133,28 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background: rgba(45, 62, 80, 0.2);
+  background: rgba(38, 49, 64, 0.18);
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: rgba(45, 62, 80, 0.35);
+  background: rgba(38, 49, 64, 0.32);
 }
 
 *::-webkit-scrollbar-track {
   background: transparent;
+}
+
+.dark * {
+  scrollbar-color: rgba(232, 236, 240, 0.18) transparent;
+}
+
+.dark *::-webkit-scrollbar-thumb {
+  background: rgba(232, 236, 240, 0.14);
+}
+
+.dark *::-webkit-scrollbar-thumb:hover {
+  background: rgba(232, 236, 240, 0.26);
 }
 
 html {
@@ -96,38 +170,28 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   position: relative;
   isolation: isolate;
 }
 
-/* Faint paper-fiber texture — grounds the "research workspace" feel
-   without reading as a glossy tech product. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  pointer-events: none;
-  opacity: 0.025;
-  mix-blend-mode: multiply;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+/* Digits in tables, page numbers, and citation counts shouldn't reflow
+   as they change during streaming. */
+table,
+[data-tabular] {
+  font-variant-numeric: tabular-nums;
 }
 
-.dark body::before {
-  opacity: 0.05;
-  mix-blend-mode: overlay;
+::selection {
+  background: rgba(250, 93, 25, 0.22);
 }
 
-.dark * {
-  scrollbar-color: rgba(231, 228, 224, 0.2) transparent;
-}
-
-.dark *::-webkit-scrollbar-thumb {
-  background: rgba(231, 228, 224, 0.15);
-}
-
-.dark *::-webkit-scrollbar-thumb:hover {
-  background: rgba(231, 228, 224, 0.28);
+/* One focus treatment for the whole app, keyboard users only. */
+:focus-visible {
+  outline: 2px solid #fa5d19;
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 @keyframes fade-up {
@@ -140,18 +204,24 @@ body::before {
   100% { background-position: 200% 0; }
 }
 
-/* Used for the "connection thread" lines drawn between related passages
-   across documents — draws left-to-right on appearance. */
+/* Draws the "connection thread" lines between related passages across
+   documents — left to right on appearance. */
 @keyframes thread-draw {
   from { stroke-dashoffset: 1; }
   to { stroke-dashoffset: 0; }
 }
 
-/* Brief highlight pulse used when a citation is clicked and the
-   corresponding source passage is scrolled into view. */
+/* Brief pulse when a citation is clicked and its source passage is
+   scrolled into view. */
 @keyframes highlight-flash {
-  0% { background-color: rgba(245, 158, 11, 0.35); }
-  100% { background-color: rgba(245, 158, 11, 0.08); }
+  0% { background-color: rgba(250, 93, 25, 0.32); }
+  100% { background-color: rgba(250, 93, 25, 0.08); }
+}
+
+/* Block cursor trailing streamed tokens. */
+@keyframes caret-blink {
+  0%, 45% { opacity: 1; }
+  55%, 100% { opacity: 0; }
 }
 
 @utility animate-fade-up {
@@ -161,16 +231,16 @@ body::before {
 @utility shimmer-bg {
   background: linear-gradient(
     100deg,
-    rgba(45, 62, 80, 0.04) 20%,
-    rgba(45, 62, 80, 0.09) 40%,
-    rgba(45, 62, 80, 0.04) 60%
+    rgba(38, 49, 64, 0.04) 20%,
+    rgba(38, 49, 64, 0.09) 40%,
+    rgba(38, 49, 64, 0.04) 60%
   );
   background-size: 200% 100%;
   animation: shimmer 2.2s ease-in-out infinite;
 }
 
-/* Apply alongside the SVG attribute pathLength={1} on the <path>
-   element so stroke-dasharray/stroke-dashoffset of 1 map to 0-100%. */
+/* Apply alongside the SVG attribute pathLength={1} on the <path> element
+   so stroke-dasharray/stroke-dashoffset of 1 map to 0-100%. */
 @utility thread-line {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
@@ -181,11 +251,38 @@ body::before {
   animation: highlight-flash 1.5s ease-out forwards;
 }
 
+@utility stream-caret {
+  display: inline-block;
+  width: 0.5ch;
+  height: 1em;
+  margin-left: 0.12em;
+  vertical-align: text-bottom;
+  background: #fa5d19;
+  animation: caret-blink 1s step-end infinite;
+}
+
+/* Hairline rules that stay crisp on both grounds. */
+@utility rule-hairline {
+  border-color: var(--hairline);
+}
+
+/* Faint dot texture for hero/section backgrounds — a quiet nod to
+   terminal-grid aesthetics without competing with the ember accent. */
+@utility dot-grid-bg {
+  background-image: radial-gradient(circle, rgba(38, 49, 64, 0.18) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.dark .dot-grid-bg {
+  background-image: radial-gradient(circle, rgba(232, 236, 240, 0.14) 1px, transparent 1px);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-up,
   .shimmer-bg,
   .thread-line,
-  .highlight-flash {
+  .highlight-flash,
+  .stream-caret {
     animation: none !important;
   }
 }

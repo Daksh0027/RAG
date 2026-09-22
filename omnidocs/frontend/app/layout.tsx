@@ -1,5 +1,5 @@
 import { ClerkProvider } from "@clerk/nextjs";
-import { Inter, IBM_Plex_Serif, IBM_Plex_Mono } from "next/font/google";
+import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({
@@ -8,19 +8,28 @@ const inter = Inter({
   display: "swap",
 });
 
-const plexSerif = IBM_Plex_Serif({
+// Display face: a geometric grotesque. Engineered rather than literary,
+// which suits a tool that reads documents for a living.
+const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
-  variable: "--font-plex-serif",
-  weight: ["500", "600", "700"],
+  variable: "--font-space-grotesk",
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
-const plexMono = IBM_Plex_Mono({
+// Utility face: carries citations, filenames, page numbers, and field labels.
+const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
-  variable: "--font-plex-mono",
-  weight: ["400", "500"],
+  variable: "--font-jetbrains-mono",
+  weight: ["400", "500", "600"],
   display: "swap",
 });
+
+export const metadata = {
+  title: "OmniDocs — Read across your documents",
+  description:
+    "Index your PDFs, ask questions across all of them at once, and get answers with the page they came from.",
+};
 
 export default function RootLayout({
   children,
@@ -31,7 +40,8 @@ export default function RootLayout({
     <ClerkProvider>
       <html
         lang="en"
-        className={`${inter.variable} ${plexSerif.variable} ${plexMono.variable}`}
+        suppressHydrationWarning
+        className={`${inter.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}
       >
         <head>
           {/* Applies the stored/system theme before hydration to avoid a
@@ -42,9 +52,7 @@ export default function RootLayout({
             }}
           />
         </head>
-        <body>
-          {children}
-        </body>
+        <body>{children}</body>
       </html>
     </ClerkProvider>
   );
