@@ -1,5 +1,6 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import { QueryProvider } from "../lib/query";
 import "./globals.css";
 
 const inter = Inter({
@@ -52,7 +53,9 @@ export default function RootLayout({
             }}
           />
         </head>
-        <body>{children}</body>
+        <body>
+          <QueryProvider>{children}</QueryProvider>
+        </body>
       </html>
     </ClerkProvider>
   );

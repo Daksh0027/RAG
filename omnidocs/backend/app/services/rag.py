@@ -3,6 +3,7 @@ import re
 import json
 import logging
 import unicodedata
+import hashlib
 from collections.abc import Iterator
 from pypdf import PdfReader
 import google.generativeai as genai
@@ -20,6 +21,54 @@ from ..database import SessionLocal
 from ..services.llm import llm
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Embedding cache
+# ---------------------------------------------------------------------------
+# Keyed by (sha256(text), is_query) so identical chunks/queries are never
+# re-embedded across requests.  A plain LRU dict keeps the most-recently-used
+# 4096 entries; at ~3072 floats × 4 bytes each that is roughly 48 MB for a
+# fully-warm cache — acceptable for a single-process deployment.
+
+_EMBEDDING_CACHE_MAX = 4096
+# OrderedDict is used to implement LRU eviction without adding dependencies.
+from collections import OrderedDict as _OrderedDict
+
+class _EmbeddingCache:
+    """Thread-unsafe LRU cache mapping (text_hash, is_query) → embedding list."""
+
+    def __init__(self, maxsize: int):
+        self._cache: _OrderedDict[tuple, list[float]] = _OrderedDict()
+        self._maxsize = maxsize
+        self.hits = 0
+        self.misses = 0
+
+    def get(self, key: tuple) -> list[float] | None:
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            self.hits += 1
+            return self._cache[key]
+        self.misses += 1
+        return None
+
+    def put(self, key: tuple, value: list[float]) -> None:
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        else:
+            if len(self._cache) >= self._maxsize:
+                self._cache.popitem(last=False)
+        self._cache[key] = value
+
+    def __len__(self) -> int:
+        return len(self._cache)
+
+
+_embedding_cache = _EmbeddingCache(maxsize=_EMBEDDING_CACHE_MAX)
+
+
+def _text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
 
 # Cap per-document context fed into the comparison-table prompt so large
 # documents don't blow out the prompt size or cost.
@@ -269,11 +318,50 @@ def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[st
     return chunks
 
 def generate_embedding(text: str, is_query: bool = False) -> list[float]:
-    return llm.embed(text, is_query=is_query)
+    """Return embedding for *text*, serving from cache when possible."""
+    key = (_text_hash(text), is_query)
+    cached = _embedding_cache.get(key)
+    if cached is not None:
+        return cached
+    embedding = llm.embed(text, is_query=is_query)
+    _embedding_cache.put(key, embedding)
+    return embedding
+
 
 def generate_embeddings_batch(texts: list[str], batch_size: int = 50) -> list[list[float]]:
-    # The provider now handles batching logic internally or via SDK
-    return llm.embed_batch(texts)
+    """Return embeddings for a batch of texts.
+
+    Texts already in the embedding cache are served from there; only the
+    uncached subset is sent to the API as a single batched request.  Results
+    are written back into the cache before returning.
+    """
+    results: list[list[float] | None] = [None] * len(texts)
+    uncached_indices: list[int] = []
+    uncached_texts: list[str] = []
+
+    for i, text in enumerate(texts):
+        key = (_text_hash(text), False)  # batch embeds are always document-type
+        cached = _embedding_cache.get(key)
+        if cached is not None:
+            results[i] = cached
+        else:
+            uncached_indices.append(i)
+            uncached_texts.append(text)
+
+    if uncached_texts:
+        batch_embeddings = llm.embed_batch(uncached_texts)
+        for original_i, text, embedding in zip(uncached_indices, uncached_texts, batch_embeddings):
+            key = (_text_hash(text), False)
+            _embedding_cache.put(key, embedding)
+            results[original_i] = embedding
+
+    logger.debug(
+        "generate_embeddings_batch: %d cached, %d fetched from API (cache size=%d)",
+        len(texts) - len(uncached_texts),
+        len(uncached_texts),
+        len(_embedding_cache),
+    )
+    return results  # type: ignore[return-value]
 
 def extract_file_chunks_with_pages(file_path: str) -> list[tuple[str, int]]:
     if not os.path.exists(file_path):

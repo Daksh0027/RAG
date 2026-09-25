@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import { apiFetch, apiStream } from "../../../../lib/api";
+import { useDocument, useDocumentChatHistory, useInvalidators } from "../../../../lib/queries";
 import { useTheme } from "../../../../lib/theme";
 import { useSpeech } from "../../../../lib/speech";
 import PdfViewer from "../../../../components/PdfViewer";
@@ -50,16 +51,50 @@ export default function ChatPage() {
   const { speak, speakingId, isSupported: isSpeechSupported } = useSpeech();
 
   const documentId = params?.id as string;
+  const isAuthReady = isLoaded && Boolean(userId) && Boolean(documentId);
 
-  const [document, setDocument] = useState<DocumentMeta | null>(null);
+  // ── React Query data fetching ──────────────────────────────────────────
+  const {
+    data: document,
+    isLoading: isLoadingDocument,
+    error: documentError,
+    refetch: refetchDocument,
+  } = useDocument(documentId, getToken, isAuthReady);
+
+  const {
+    data: chatHistory,
+    isLoading: isLoadingChat,
+    refetch: refetchChatHistory,
+  } = useDocumentChatHistory(
+    documentId,
+    getToken,
+    isAuthReady && (document as DocumentMeta | undefined)?.status === "completed"
+  );
+
+  const { invalidateChatHistory } = useInvalidators();
+
+  // ── Local UI state ─────────────────────────────────────────────────────
+  // Messages start from cache, then accumulate streaming turns locally
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState("");
   const [expandedSources, setExpandedSources] = useState<Record<number, boolean>>({});
 
-  const [isLoadingDocument, setIsLoadingDocument] = useState(true);
-  const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Sync React Query chat history into local messages state
+  useEffect(() => {
+    if (chatHistory) {
+      setMessages(chatHistory as Message[]);
+    }
+  }, [chatHistory]);
+
+  // Surface document load error
+  useEffect(() => {
+    if (documentError) {
+      setError(documentError instanceof Error ? documentError.message : "Could not load this document.");
+    }
+  }, [documentError]);
 
   const [selectedCitation, setSelectedCitation] = useState<SelectedCitation | null>(null);
   const [flashToken, setFlashToken] = useState(0);
@@ -120,49 +155,17 @@ export default function ChatPage() {
   // Abort any in-flight stream when the page unmounts.
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const fetchChatHistory = useCallback(async () => {
-    try {
-      setIsLoadingChat(true);
-      const token = await getToken();
-      const history = await apiFetch(`/api/documents/${documentId}/chat`, {}, token);
-      setMessages(history);
-    } catch (err) {
-      console.error("Could not load chat history:", err);
-    } finally {
-      setIsLoadingChat(false);
-    }
-  }, [documentId, getToken]);
-
-  const fetchDocumentDetails = useCallback(async () => {
-    try {
-      setIsLoadingDocument(true);
-      setError(null);
-      const token = await getToken();
-      const doc: DocumentMeta = await apiFetch(`/api/documents/${documentId}`, {}, token);
-      setDocument(doc);
-      if (doc.status === "completed") await fetchChatHistory();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load this document.");
-    } finally {
-      setIsLoadingDocument(false);
-    }
-  }, [documentId, getToken, fetchChatHistory]);
-
-  useEffect(() => {
-    if (isLoaded && userId && documentId) fetchDocumentDetails();
-  }, [isLoaded, userId, documentId, fetchDocumentDetails]);
-
   // Poll while indexing is in progress.
   useEffect(() => {
-    if (!document || document.status !== "processing") return;
+    const doc = document as DocumentMeta | undefined;
+    if (!doc || doc.status !== "processing") return;
 
     const interval = setInterval(async () => {
       try {
-        const token = await getToken();
-        const doc: DocumentMeta = await apiFetch(`/api/documents/${documentId}`, {}, token);
-        if (doc.status !== "processing") {
-          setDocument(doc);
-          if (doc.status === "completed") fetchChatHistory();
+        const { data: updated } = await refetchDocument();
+        const updatedDoc = updated as DocumentMeta | undefined;
+        if (updatedDoc && updatedDoc.status !== "processing") {
+          if (updatedDoc.status === "completed") refetchChatHistory();
           clearInterval(interval);
         }
       } catch (err) {
@@ -171,7 +174,7 @@ export default function ChatPage() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [document, documentId, getToken, fetchChatHistory]);
+  }, [(document as DocumentMeta | undefined)?.status, refetchDocument, refetchChatHistory]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -223,6 +226,8 @@ export default function ChatPage() {
         },
         controller.signal
       );
+      // Invalidate so the persisted history stays in sync when navigating away and back
+      invalidateChatHistory(documentId);
     } catch (err) {
       // Roll back both the placeholder and the question so a failed send
       // doesn't leave an orphaned bubble the user can't retry from.
@@ -271,12 +276,14 @@ export default function ChatPage() {
 
   const activePage = selectedCitation?.citation.page_number ?? null;
 
+  const doc = document as DocumentMeta | undefined;
+
   const statusStyles: Record<DocumentMeta["status"], { text: string; dot: string; label: string }> = {
     processing: { text: "text-ember-600 dark:text-ember-400", dot: "bg-ember-500", label: "Indexing" },
     failed: { text: "text-alert-600 dark:text-alert-400", dot: "bg-alert-500", label: "Failed" },
     completed: { text: "text-signal-600 dark:text-signal-400", dot: "bg-signal-500", label: "Indexed" },
   };
-  const status = document ? statusStyles[document.status] : null;
+  const status = doc ? statusStyles[doc.status] : null;
 
   const renderPassage = () => {
     if (selectedCitation) {
@@ -291,8 +298,8 @@ export default function ChatPage() {
               <span className="font-mono text-xs text-ink-400">p. {citation.page_number}</span>
             )}
           </div>
-          <p className="font-mono text-xs text-ink-400 truncate" title={document?.filename}>
-            {document?.filename}
+          <p className="font-mono text-xs text-ink-400 truncate" title={doc?.filename}>
+            {doc?.filename}
           </p>
           <p className="text-sm text-ink-700 dark:text-ink-200 leading-relaxed whitespace-pre-wrap">
             {citation.content}
@@ -409,20 +416,20 @@ export default function ChatPage() {
                 className="font-mono text-sm text-ink-900 dark:text-ink-50 truncate"
                 title={document?.filename}
               >
-                {document?.filename}
+                {doc?.filename}
               </h1>
-              {document && status && (
+              {doc && status && (
                 <p className="flex items-center gap-2 font-mono text-eyebrow uppercase text-ink-400">
                   <span className={`inline-flex items-center gap-1.5 ${status.text}`}>
                     <span
                       className={`w-1 h-1 rounded-full ${status.dot} ${
-                        document.status === "processing" ? "animate-pulse" : ""
+                        doc.status === "processing" ? "animate-pulse" : ""
                       }`}
                     />
                     {status.label}
                   </span>
                   <span className="text-ink-300 dark:text-ink-600">/</span>
-                  <span>{formatFileSize(document.file_size)}</span>
+                  <span>{formatFileSize(doc.file_size)}</span>
                 </p>
               )}
             </div>
@@ -467,7 +474,7 @@ export default function ChatPage() {
       )}
 
       <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden">
-        {document && document.status === "processing" ? (
+        {doc && doc.status === "processing" ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center gap-5 p-6">
             <div className="w-10 h-10 rounded-full border-2 border-ink-200 dark:border-ink-700 border-t-ember-500 animate-spin" />
             <div className="space-y-1.5 max-w-sm">
@@ -478,14 +485,14 @@ export default function ChatPage() {
               </p>
             </div>
             <button
-              onClick={fetchDocumentDetails}
+              onClick={() => refetchDocument()}
               className="inline-flex items-center gap-2 h-9 px-4 rounded-md border border-hairline bg-surface-raised font-mono text-eyebrow uppercase text-ink-600 dark:text-ink-300 hover:border-ember-400 transition-colors cursor-pointer"
             >
               <Icon name="refresh" className="w-3.5 h-3.5" />
               Check now
             </button>
           </div>
-        ) : document && document.status === "failed" ? (
+        ) : doc && doc.status === "failed" ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center gap-5 p-6">
             <Icon name="warning" className="w-8 h-8 text-alert-500" />
             <div className="space-y-1.5 max-w-sm">

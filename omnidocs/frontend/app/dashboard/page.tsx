@@ -5,6 +5,7 @@ import { useAuth, UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "../../lib/api";
+import { useDocuments, useWorkspaces, useInvalidators } from "../../lib/queries";
 import { useTheme } from "../../lib/theme";
 import Icon from "../../components/Icon";
 
@@ -43,9 +44,24 @@ export default function DashboardPage() {
   const { theme, toggleTheme } = useTheme();
   const router = useRouter();
 
-  const [documents, setDocuments] = useState<DocumentMeta[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const isAuthReady = isLoaded && Boolean(userId);
+
+  // ── React Query data fetching ──────────────────────────────────────────
+  const {
+    data: documents = [],
+    isLoading,
+    error: docsError,
+    refetch: refetchDocuments,
+  } = useDocuments(getToken, isAuthReady);
+
+  const { data: workspaces = [], refetch: refetchWorkspaces } = useWorkspaces(
+    getToken,
+    isAuthReady
+  );
+
+  const { invalidateDocuments, invalidateWorkspaces } = useInvalidators();
+
+  // ── Local UI state ─────────────────────────────────────────────────────
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -58,46 +74,19 @@ export default function DashboardPage() {
 
   const [activeTab, setActiveTab] = useState<"documents" | "workspaces">("documents");
 
-  const fetchDocuments = useCallback(
-    async (silent = false) => {
-      try {
-        if (!silent) setIsLoading(true);
-        setError(null);
-        const token = await getToken();
-        const docs = await apiFetch("/api/documents", {}, token);
-        setDocuments(docs);
-      } catch (err) {
-        if (!silent) setError(err instanceof Error ? err.message : "Could not load documents.");
-      } finally {
-        if (!silent) setIsLoading(false);
-      }
-    },
-    [getToken]
-  );
-
-  const fetchWorkspaces = useCallback(async () => {
-    try {
-      const token = await getToken();
-      const ws = await apiFetch("/api/workspaces", {}, token);
-      setWorkspaces(ws);
-    } catch (err) {
-      console.error("Could not load workspaces:", err);
-    }
-  }, [getToken]);
-
+  // Surface React Query errors in the existing error banner
   useEffect(() => {
-    if (isLoaded && userId) {
-      fetchDocuments();
-      fetchWorkspaces();
+    if (docsError) {
+      setError(docsError instanceof Error ? docsError.message : "Could not load documents.");
     }
-  }, [isLoaded, userId, fetchDocuments, fetchWorkspaces]);
+  }, [docsError]);
 
   // Poll while anything is still indexing.
   useEffect(() => {
-    if (!documents.some((d) => d.status === "processing")) return;
-    const interval = setInterval(() => fetchDocuments(true), 3000);
+    if (!(documents as DocumentMeta[]).some((d) => d.status === "processing")) return;
+    const interval = setInterval(() => refetchDocuments(), 3000);
     return () => clearInterval(interval);
-  }, [documents, fetchDocuments]);
+  }, [documents, refetchDocuments]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -119,7 +108,7 @@ export default function DashboardPage() {
       const token = await getToken();
       await apiFetch("/api/documents", { method: "POST", body: formData }, token);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      await fetchDocuments();
+      invalidateDocuments();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not upload that document.");
     } finally {
@@ -132,7 +121,7 @@ export default function DashboardPage() {
       setError(null);
       const token = await getToken();
       await apiFetch(`/api/documents/${id}/reprocess`, { method: "POST" }, token);
-      await fetchDocuments();
+      invalidateDocuments();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reprocess that document.");
     }
@@ -144,7 +133,7 @@ export default function DashboardPage() {
       setError(null);
       const token = await getToken();
       await apiFetch(`/api/documents/${id}`, { method: "DELETE" }, token);
-      setDocuments((prev) => prev.filter((doc) => doc.id !== id));
+      invalidateDocuments();
       setSelectedIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
@@ -161,7 +150,7 @@ export default function DashboardPage() {
       setError(null);
       const token = await getToken();
       await apiFetch(`/api/workspaces/${id}`, { method: "DELETE" }, token);
-      setWorkspaces((prev) => prev.filter((ws) => ws.id !== id));
+      invalidateWorkspaces();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not delete that workspace.");
     }
@@ -202,7 +191,7 @@ export default function DashboardPage() {
       setShowWorkspaceModal(false);
       setWorkspaceName("");
       setSelectedIds(new Set());
-      await fetchWorkspaces();
+      invalidateWorkspaces();
       router.push(`/dashboard/workspaces/${ws.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create that workspace.");
@@ -238,7 +227,7 @@ export default function DashboardPage() {
     );
   }
 
-  const completedDocs = documents.filter((d) => d.status === "completed");
+  const completedDocs = (documents as DocumentMeta[]).filter((d) => d.status === "completed");
   const selectedCount = selectedIds.size;
   const allCompletedSelected =
     completedDocs.length > 0 && completedDocs.every((d) => selectedIds.has(d.id));
@@ -449,7 +438,7 @@ export default function DashboardPage() {
                   </div>
                 )}
                 <ul className="divide-y divide-hairline">
-                  {documents.map((doc) => {
+                  {(documents as DocumentMeta[]).map((doc) => {
                     const meta = STATUS_META[doc.status];
                     const checked = selectedIds.has(doc.id);
                     return (
@@ -552,7 +541,7 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="grid gap-px bg-hairline rounded-xl overflow-hidden border border-hairline sm:grid-cols-2 lg:grid-cols-3">
-                {workspaces.map((ws) => (
+                {(workspaces as Workspace[]).map((ws) => (
                   <div key={ws.id} className="group relative bg-surface-raised p-5">
                     <button
                       type="button"
@@ -661,7 +650,7 @@ export default function DashboardPage() {
                 {selectedCount} document{selectedCount === 1 ? "" : "s"} included
               </p>
               <ul className="mt-2 max-h-40 overflow-y-auto rounded-md border border-hairline divide-y divide-hairline">
-                {documents
+                {(documents as DocumentMeta[])
                   .filter((doc) => selectedIds.has(doc.id))
                   .map((doc) => (
                     <li key={doc.id} className="flex items-center gap-2 px-3 py-2 min-w-0">

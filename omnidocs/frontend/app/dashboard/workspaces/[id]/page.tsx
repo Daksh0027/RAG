@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import { apiFetch, apiStream } from "../../../../lib/api";
+import { useWorkspace, useWorkspaceChatHistory, useInvalidators } from "../../../../lib/queries";
 import { useTheme } from "../../../../lib/theme";
 import { useSpeech } from "../../../../lib/speech";
 import PdfViewer from "../../../../components/PdfViewer";
@@ -92,19 +93,42 @@ export default function WorkspaceChatPage() {
   const params = useParams();
   const { isLoaded, userId, getToken } = useAuth();
   const workspaceId = params?.id as string;
+  const isAuthReady = isLoaded && Boolean(userId) && Boolean(workspaceId);
 
   const { theme, toggleTheme } = useTheme();
   const { speak, speakingId, isSupported: isSpeechSupported } = useSpeech();
 
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  // ── React Query data fetching ──────────────────────────────────────────
+  const {
+    data: workspaceData,
+    isLoading: isLoadingWorkspace,
+    refetch: refetchWorkspace,
+  } = useWorkspace(workspaceId, getToken, isAuthReady);
+
+  const {
+    data: workspaceChatHistory,
+  } = useWorkspaceChatHistory(workspaceId, getToken, isAuthReady);
+
+  const { invalidateWorkspace, invalidateWorkspaceChatHistory } = useInvalidators();
+
+  // Typed alias
+  const workspace = workspaceData as Workspace | undefined;
+
+  // ── Local UI state ─────────────────────────────────────────────────────
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState("");
   const [expandedSources, setExpandedSources] = useState<Record<number, boolean>>({});
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Sync React Query chat history into local messages state
+  useEffect(() => {
+    if (workspaceChatHistory) {
+      setMessages(workspaceChatHistory as Message[]);
+    }
+  }, [workspaceChatHistory]);
 
   const [showDocPicker, setShowDocPicker] = useState(false);
   const [allDocs, setAllDocs] = useState<WorkspaceDoc[]>([]);
@@ -167,26 +191,6 @@ export default function WorkspaceChatPage() {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const fetchWorkspace = useCallback(async () => {
-    try {
-      setIsLoadingWorkspace(true);
-      setError(null);
-      const token = await getToken();
-      const ws: Workspace = await apiFetch(`/api/workspaces/${workspaceId}`, {}, token);
-      setWorkspace(ws);
-      const history: Message[] = await apiFetch(`/api/workspaces/${workspaceId}/chat`, {}, token);
-      setMessages(history);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load this workspace.");
-    } finally {
-      setIsLoadingWorkspace(false);
-    }
-  }, [workspaceId, getToken]);
-
-  useEffect(() => {
-    if (isLoaded && userId && workspaceId) fetchWorkspace();
-  }, [isLoaded, userId, workspaceId, fetchWorkspace]);
-
   const fetchAllDocs = async () => {
     try {
       const token = await getToken();
@@ -209,7 +213,7 @@ export default function WorkspaceChatPage() {
       setIsUpdating(true);
       setError(null);
       const token = await getToken();
-      const updated = await apiFetch(
+      await apiFetch(
         `/api/workspaces/${workspaceId}`,
         {
           method: "PATCH",
@@ -218,7 +222,7 @@ export default function WorkspaceChatPage() {
         },
         token
       );
-      setWorkspace(updated);
+      invalidateWorkspace(workspaceId);
       setShowDocPicker(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update the document set.");
@@ -405,6 +409,8 @@ export default function WorkspaceChatPage() {
         },
         controller.signal
       );
+      // Keep persisted history in sync when user navigates away and back
+      invalidateWorkspaceChatHistory(workspaceId);
     } catch (err) {
       // Drop the placeholder and the question together, and put the text back
       // in the composer so the send can be retried.
