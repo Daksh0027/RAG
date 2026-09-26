@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     # In development, localhost origins are allowed by default.
     ENV: str = "development"
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5433/omnidocs"
+    REDIS_URL: str = "redis://localhost:6379"
     CLERK_JWKS_URL: str = "https://verified-panther-1.clerk.accounts.dev/.well-known/jwks.json"
     STORAGE_DIR: str = "storage"
     GEMINI_API_KEY: str = Field(

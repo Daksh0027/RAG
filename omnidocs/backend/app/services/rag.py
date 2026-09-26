@@ -4,6 +4,7 @@ import json
 import logging
 import unicodedata
 import hashlib
+import redis
 from collections.abc import Iterator
 from pypdf import PdfReader
 import google.generativeai as genai
@@ -26,44 +27,58 @@ logger = logging.getLogger(__name__)
 # Embedding cache
 # ---------------------------------------------------------------------------
 # Keyed by (sha256(text), is_query) so identical chunks/queries are never
-# re-embedded across requests.  A plain LRU dict keeps the most-recently-used
-# 4096 entries; at ~3072 floats × 4 bytes each that is roughly 48 MB for a
-# fully-warm cache — acceptable for a single-process deployment.
+# re-embedded across requests. Using Redis for a distributed, persistent
+# cache with a 30-day TTL.
 
-_EMBEDDING_CACHE_MAX = 4096
-# OrderedDict is used to implement LRU eviction without adding dependencies.
-from collections import OrderedDict as _OrderedDict
+class RedisEmbeddingCache:
+    """Redis-backed cache mapping (text_hash, is_query) -> embedding list."""
 
-class _EmbeddingCache:
-    """Thread-unsafe LRU cache mapping (text_hash, is_query) → embedding list."""
+    def __init__(self, redis_url: str):
+        try:
+            self._client = redis.from_url(redis_url, decode_responses=True)
+            # Test connection
+            self._client.ping()
+        except Exception as e:
+            logger.warning(f"Failed to connect to Redis at {redis_url}: {e}. Cache will be disabled.")
+            self._client = None
 
-    def __init__(self, maxsize: int):
-        self._cache: _OrderedDict[tuple, list[float]] = _OrderedDict()
-        self._maxsize = maxsize
-        self.hits = 0
-        self.misses = 0
+    def _make_key(self, key: tuple) -> str:
+        # key is (text_hash, is_query)
+        return f"emb:{key[0]}:{int(key[1])}"
 
     def get(self, key: tuple) -> list[float] | None:
-        if key in self._cache:
-            self._cache.move_to_end(key)
-            self.hits += 1
-            return self._cache[key]
-        self.misses += 1
-        return None
+        if self._client is None:
+            return None
+        try:
+            val = self._client.get(self._make_key(key))
+            return json.loads(val) if val else None
+        except Exception as e:
+            logger.warning(f"Redis GET error: {e}")
+            return None
 
     def put(self, key: tuple, value: list[float]) -> None:
-        if key in self._cache:
-            self._cache.move_to_end(key)
-        else:
-            if len(self._cache) >= self._maxsize:
-                self._cache.popitem(last=False)
-        self._cache[key] = value
+        if self._client is None:
+            return
+        try:
+            # Store as JSON string with 30-day TTL
+            self._client.setex(
+                self._make_key(key),
+                60 * 60 * 24 * 30,
+                json.dumps(value)
+            )
+        except Exception as e:
+            logger.warning(f"Redis PUT error: {e}")
 
     def __len__(self) -> int:
-        return len(self._cache)
+        if self._client is None:
+            return 0
+        try:
+            return self._client.dbsize()
+        except Exception:
+            return 0
 
 
-_embedding_cache = _EmbeddingCache(maxsize=_EMBEDDING_CACHE_MAX)
+_embedding_cache = RedisEmbeddingCache(redis_url=settings.REDIS_URL)
 
 
 def _text_hash(text: str) -> str:
