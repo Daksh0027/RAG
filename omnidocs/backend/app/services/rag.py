@@ -485,3 +485,168 @@ def rerank_chunks(query: str, chunks: list, top_k: int = 5) -> list:
         logger.warning(f"Reranking failed, falling back to top_k: {e}")
 
     return chunks[:top_k]
+
+
+_SELF_CORRECTION_SYSTEM = (
+    "You are a careful fact-checker reviewing an AI assistant's draft answer.\n"
+    "You will be shown the instructions and retrieved context the assistant was "
+    "given, the user's question, and the assistant's draft answer.\n"
+    "Check every factual claim in the draft against the retrieved context:\n"
+    "- If a claim is NOT supported by the context, remove or correct it.\n"
+    "- If the context clearly answers something the draft missed, add it.\n"
+    "- If the draft is already fully accurate and grounded, return it unchanged.\n"
+    "- Preserve the draft's tone, structure, and citations/page references when they are correct.\n"
+    "Respond with ONLY the corrected final answer text — no explanation, no meta-commentary, "
+    "and no preamble like \"Here is the corrected answer\"."
+)
+
+
+def self_correct_answer(system_prompt: str, user_message: str, draft_answer: str) -> str:
+    """Self-correction pass: verifies a draft answer against the retrieved
+    context it was generated from (embedded in `system_prompt`) and returns a
+    corrected version if the draft contains unsupported claims or misses
+    something the context covers, or the original draft unchanged if it
+    already holds up.
+
+    This trades one extra LLM call for meaningfully reducing hallucinated or
+    ungrounded claims slipping through. Never raises: if the correction call
+    itself fails, the original draft is returned rather than losing the
+    answer the user is waiting on.
+    """
+    if not draft_answer.strip():
+        return draft_answer
+
+    review_prompt = (
+        f"[ORIGINAL INSTRUCTIONS AND CONTEXT GIVEN TO THE ASSISTANT]:\n{system_prompt}\n\n"
+        f"[USER QUESTION]:\n{user_message}\n\n"
+        f"[ASSISTANT'S DRAFT ANSWER]:\n{draft_answer}"
+    )
+
+    try:
+        corrected = llm.generate(_SELF_CORRECTION_SYSTEM, review_prompt)
+        corrected = (corrected or "").strip()
+        return corrected if corrected else draft_answer
+    except Exception as e:
+        logger.warning(f"Self-correction pass failed, using original draft: {e}")
+        return draft_answer
+
+
+# ---------------------------------------------------------------------------
+# Corrective retrieval (CRAG)
+#
+# retrieve -> grade relevance -> insufficient? rewrite query & retry
+#          -> still insufficient after retries? caller falls back to web search
+#
+# This is deliberately decoupled from *how* retrieval itself works (hybrid
+# search + rerank, scoped to one document or many) via the `retrieve_fn`
+# callback, so the same grade/rewrite control flow serves both the
+# single-document and workspace chat endpoints.
+# ---------------------------------------------------------------------------
+
+MAX_QUERY_REWRITES = 2
+
+_GRADE_SYSTEM = (
+    "You are a strict relevance grader for a document retrieval system.\n"
+    "Given a user question and a set of retrieved text chunks, decide whether the "
+    "chunks, TAKEN TOGETHER, actually contain enough information to answer the question.\n"
+    "Respond with ONLY a JSON object of the exact shape:\n"
+    '{"sufficient": true|false, "relevant_indices": [0, 2]}\n'
+    '"relevant_indices" lists the 0-based indices of chunks that are genuinely relevant; '
+    "chunks that are topically related but don't actually help answer the question should be excluded.\n"
+    "Be strict: if the chunks don't actually answer the question, sufficient must be false, "
+    "even if they're on the same general topic."
+)
+
+
+def grade_context_relevance(user_message: str, chunks: list) -> tuple[bool, list]:
+    """Grades retrieved chunks for relevance to the question.
+
+    Returns `(is_sufficient, relevant_chunks)`. Chunks the model marks
+    irrelevant are dropped from what's fed to the final answer, which also
+    keeps the context window focused. Grading is a quality improvement, not a
+    gate that should ever block an answer outright: any failure here assumes
+    the context is sufficient and keeps every chunk, so a flaky grading call
+    never turns into a false "not found".
+    """
+    if not chunks:
+        return False, []
+
+    context_str = "\n\n".join(f"--- Chunk {i} ---\n{c.content}" for i, c in enumerate(chunks))
+    prompt = f"User question: {user_message}\n\n{context_str}"
+
+    try:
+        result = llm.generate_structured(prompt, _GRADE_SYSTEM)
+        if isinstance(result, dict):
+            indices = result.get("relevant_indices", [])
+            sufficient = bool(result.get("sufficient", True))
+            relevant = [chunks[i] for i in indices if isinstance(i, int) and 0 <= i < len(chunks)]
+            return sufficient, (relevant if relevant else chunks)
+    except Exception as e:
+        logger.warning(f"Context relevance grading failed, assuming sufficient: {e}")
+
+    return True, chunks
+
+
+_REWRITE_SYSTEM = (
+    "You rewrite search queries for a document retrieval system. The previous search "
+    "attempt(s) for the user's question did not find enough relevant information.\n"
+    "Rewrite the question into a different search query — try different phrasing, "
+    "synonyms, or a more specific/more general framing — that might retrieve better results.\n"
+    "Respond with ONLY the rewritten query text. No explanation, no quotes."
+)
+
+
+def rewrite_query(user_message: str, attempt: int, previous_queries: list[str]) -> str:
+    """Produces an alternative phrasing of the query for a retry retrieval pass.
+
+    Falls back to the original question, unchanged, if the rewrite call fails
+    — the retry then simply repeats the same search rather than erroring out.
+    """
+    try:
+        prompt = (
+            f"Original question: {user_message}\n"
+            f"This is rewrite attempt {attempt}.\n"
+            f"Already-tried queries (produce something different from these): {previous_queries}"
+        )
+        rewritten = llm.generate(_REWRITE_SYSTEM, prompt)
+        rewritten = (rewritten or "").strip()
+        return rewritten if rewritten else user_message
+    except Exception as e:
+        logger.warning(f"Query rewrite failed, reusing original query: {e}")
+        return user_message
+
+
+def retrieve_with_correction(
+    user_message: str,
+    retrieve_fn,
+    max_rewrites: int = MAX_QUERY_REWRITES,
+) -> tuple[list, bool, list[str]]:
+    """Corrective retrieval loop: retrieve, grade, rewrite-and-retry if needed.
+
+    `retrieve_fn(query: str) -> list[chunk]` performs the actual (hybrid
+    search + rerank) retrieval for a given query string. This function owns
+    the grade/rewrite/retry control flow on top of it.
+
+    Returns `(best_chunks, needs_web_fallback, queries_tried)`. The caller
+    decides what to do with `needs_web_fallback` (e.g. only act on it if a
+    web search provider is configured).
+    """
+    queries_tried = [user_message]
+    chunks = retrieve_fn(user_message)
+    sufficient, graded_chunks = grade_context_relevance(user_message, chunks)
+    best_chunks = graded_chunks or chunks
+
+    attempt = 1
+    while not sufficient and attempt <= max_rewrites:
+        rewritten = rewrite_query(user_message, attempt, queries_tried)
+        if rewritten in queries_tried:
+            break
+        queries_tried.append(rewritten)
+
+        chunks = retrieve_fn(rewritten)
+        sufficient, graded_chunks = grade_context_relevance(rewritten, chunks)
+        if graded_chunks:
+            best_chunks = graded_chunks
+        attempt += 1
+
+    return best_chunks, (not sufficient), queries_tried

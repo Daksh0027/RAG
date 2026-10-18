@@ -10,6 +10,11 @@ Event protocol (each frame is `event: <name>` + `data: <json>`):
 Errors are delivered as an `error` event rather than an HTTP status because the
 response has already begun streaming (headers are long since flushed) by the
 time generation can fail.
+
+After the draft finishes streaming, a self-correction pass checks it against
+the retrieved context before the `done` frame is sent, so the client's final
+displayed text is always the corrected version (the UI treats `done`'s
+content as authoritative, overwriting whatever was streamed in via `delta`).
 """
 
 import json
@@ -20,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Message
 from ..database import SessionLocal
-from .rag import stream_chat_response
+from .rag import stream_chat_response, self_correct_answer
 
 logger = logging.getLogger(__name__)
 
@@ -72,14 +77,19 @@ def stream_and_persist(
         )
         return
 
-    full_answer = "".join(collected)
+    draft_answer = "".join(collected)
 
-    if not full_answer.strip():
+    if not draft_answer.strip():
         yield sse_event(
             "error",
             {"detail": "The model returned an empty response. Please try rephrasing."},
         )
         return
+
+    # Self-correction: verify the streamed draft against the retrieved context
+    # and silently fix any unsupported claims before persisting/finalizing.
+    # Falls back to the draft unchanged if the correction call itself fails.
+    final_answer = self_correct_answer(system_prompt, user_message, draft_answer)
 
     db: Session = SessionLocal()
     try:
@@ -93,7 +103,7 @@ def stream_and_persist(
             document_id=document_id,
             workspace_id=workspace_id,
             role="assistant",
-            content=full_answer,
+            content=final_answer,
             sources=sources,
         ))
         db.commit()
@@ -105,4 +115,4 @@ def stream_and_persist(
     finally:
         db.close()
 
-    yield sse_event("done", {"content": full_answer})
+    yield sse_event("done", {"content": final_answer})

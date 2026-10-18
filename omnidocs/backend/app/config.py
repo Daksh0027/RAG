@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # Maximum allowed upload size in MB.
     MAX_UPLOAD_MB: int = 50
 
+    # Optional: enables web-search fallback in corrective retrieval (CRAG) when
+    # a document/workspace's indexed content doesn't sufficiently answer a
+    # question. Get a free key at https://tavily.com. Leave blank to disable
+    # the fallback entirely — retrieval then just reports "not found".
+    TAVILY_API_KEY: str = ""
+
 
     # When True, unexpected server errors return their exception text to the
     # client. Useful locally; leave False in any shared environment so
