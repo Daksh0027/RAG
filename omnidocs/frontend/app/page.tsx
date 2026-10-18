@@ -331,13 +331,28 @@ export default function HomePage() {
 
         {/* Footer */}
         <footer className="border-t border-hairline">
-          <div className="overflow-hidden">
-            <p
-              aria-hidden="true"
-              className="font-display font-bold tracking-tighter text-[clamp(4rem,14vw,11rem)] leading-[0.78] text-ink-900 dark:text-ink-50 select-none translate-y-[0.14em]"
+          <div className="overflow-hidden pt-4" aria-hidden="true">
+            <svg
+              viewBox="0 0 1200 270"
+              className="block w-full h-auto"
+              role="presentation"
             >
-              OmniDocs
-            </p>
+              <text
+                x="0"
+                y="290"
+                textLength="1200"
+                lengthAdjust="spacingAndGlyphs"
+                style={{
+                  fontFamily: "var(--font-space-grotesk), sans-serif",
+                  fontSize: 330,
+                  fontWeight: 700,
+                  letterSpacing: "-0.04em",
+                  fill: "currentColor",
+                }}
+              >
+                OmniDocs
+              </text>
+            </svg>
           </div>
           <div className="py-6 flex flex-col sm:flex-row items-center justify-between gap-3">
             <p className="text-xs text-ink-400">
