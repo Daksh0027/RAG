@@ -331,20 +331,21 @@ export default function HomePage() {
 
         {/* Footer */}
         <footer className="border-t border-hairline">
-          <div className="overflow-hidden pt-4" aria-hidden="true">
+          <div className="overflow-hidden pt-4 pb-2" aria-hidden="true">
             <svg
-              viewBox="0 0 1200 270"
+              viewBox="0 0 1200 240"
               className="block w-full h-auto"
               role="presentation"
+              preserveAspectRatio="xMinYMin meet"
             >
               <text
                 x="0"
-                y="290"
+                y="200"
                 textLength="1200"
                 lengthAdjust="spacingAndGlyphs"
                 style={{
                   fontFamily: "var(--font-space-grotesk), sans-serif",
-                  fontSize: 330,
+                  fontSize: 230,
                   fontWeight: 700,
                   letterSpacing: "-0.04em",
                   fill: "currentColor",
