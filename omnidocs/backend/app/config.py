@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # question. Get a free key at https://tavily.com. Leave blank to disable
     # the fallback entirely — retrieval then just reports "not found".
     TAVILY_API_KEY: str = ""
+    NEXT_PUBLIC_SUPABASE_URL: str = ""
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: str = ""
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: str = ""
 
 
     # When True, unexpected server errors return their exception text to the

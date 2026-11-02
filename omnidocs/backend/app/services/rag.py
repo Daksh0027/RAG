@@ -31,51 +31,22 @@ logger = logging.getLogger(__name__)
 # cache with a 30-day TTL.
 
 class RedisEmbeddingCache:
-    """Redis-backed cache mapping (text_hash, is_query) -> embedding list."""
+    """Simplified cache that is always disabled for now."""
 
     def __init__(self, redis_url: str):
-        try:
-            self._client = redis.from_url(redis_url, decode_responses=True)
-            # Test connection
-            self._client.ping()
-        except Exception as e:
-            logger.warning(f"Failed to connect to Redis at {redis_url}: {e}. Cache will be disabled.")
-            self._client = None
+        self._client = None
 
     def _make_key(self, key: tuple) -> str:
-        # key is (text_hash, is_query)
         return f"emb:{key[0]}:{int(key[1])}"
 
     def get(self, key: tuple) -> list[float] | None:
-        if self._client is None:
-            return None
-        try:
-            val = self._client.get(self._make_key(key))
-            return json.loads(val) if val else None
-        except Exception as e:
-            logger.warning(f"Redis GET error: {e}")
-            return None
+        return None
 
     def put(self, key: tuple, value: list[float]) -> None:
-        if self._client is None:
-            return
-        try:
-            # Store as JSON string with 30-day TTL
-            self._client.setex(
-                self._make_key(key),
-                60 * 60 * 24 * 30,
-                json.dumps(value)
-            )
-        except Exception as e:
-            logger.warning(f"Redis PUT error: {e}")
+        pass
 
     def __len__(self) -> int:
-        if self._client is None:
-            return 0
-        try:
-            return self._client.dbsize()
-        except Exception:
-            return 0
+        return 0
 
 
 _embedding_cache = RedisEmbeddingCache(redis_url=settings.REDIS_URL)
@@ -379,34 +350,50 @@ def generate_embeddings_batch(texts: list[str], batch_size: int = 50) -> list[li
     return results  # type: ignore[return-value]
 
 def extract_file_chunks_with_pages(file_path: str) -> list[tuple[str, int]]:
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"File not found at path: {file_path}")
-    ext = os.path.splitext(file_path)[1].lower()
-    chunks_with_pages = []
-    if ext == ".pdf":
-        # Consume the text generator to process pages one by one
-        for i, page_text in enumerate(extract_text_from_pdf(file_path)):
-            if page_text.strip():
-                for chunk_content in chunk_text(page_text):
-                    chunks_with_pages.append((chunk_content, i + 1))
-    elif ext in (".txt", ".md"):
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            text = f.read()
+    """Downloads file from Supabase Storage to a temp file and extracts text."""
+    if not file_path:
+        raise ValueError("File path is empty")
+
+    # Download from Supabase
+    try:
+        res = supabase.storage.from_("documents").download(file_path)
+        temp_path = f"temp_{uuid.uuid4()}{os.path.splitext(file_path)[1]}"
+        with open(temp_path, "wb") as f:
+            f.write(res)
+    except Exception as e:
+        logger.error(f"Failed to download {file_path} from storage: {e}")
+        raise FileNotFoundError(f"Cloud file not found: {file_path}")
+
+    try:
+        ext = os.path.splitext(file_path)[1].lower()
+        chunks_with_pages = []
+        if ext == ".pdf":
+            for i, page_text in enumerate(extract_text_from_pdf(temp_path)):
+                if page_text.strip():
+                    for chunk_content in chunk_text(page_text):
+                        chunks_with_pages.append((chunk_content, i + 1))
+        elif ext in (".txt", ".md"):
+            with open(temp_path, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+                if text.strip():
+                    for chunk_content in chunk_text(text):
+                        chunks_with_pages.append((chunk_content, 1))
+        elif ext == ".docx":
+            import docx
+            doc = docx.Document(temp_path)
+            text = "\n".join([para.text for para in doc.paragraphs])
             if text.strip():
                 for chunk_content in chunk_text(text):
                     chunks_with_pages.append((chunk_content, 1))
-    elif ext == ".docx":
-        import docx
-        doc = docx.Document(file_path)
-        text = "\n".join([para.text for para in doc.paragraphs])
-        if text.strip():
-            for chunk_content in chunk_text(text):
-                chunks_with_pages.append((chunk_content, 1))
-    else:
-        raise ValueError(f"Unsupported file extension: {ext}")
-    if not chunks_with_pages:
-        raise ValueError(f"No extractable text found in {file_path}. It might be empty or scanned.")
-    return chunks_with_pages
+        else:
+            raise ValueError(f"Unsupported file extension: {ext}")
+
+        if not chunks_with_pages:
+            raise ValueError(f"No extractable text found in {file_path}.")
+        return chunks_with_pages
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 def index_document_chunks(
     db: Session,

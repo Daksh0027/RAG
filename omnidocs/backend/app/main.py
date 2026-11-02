@@ -116,3 +116,7 @@ def health_check():
 @app.get("/")
 def read_root():
     return {"status": "healthy", "service": "OmniDocs API"}
+
+@app.get("/debug-ping")
+def debug_ping():
+    return {"status": "ok", "message": "Backend is reachable and bypassing auth"}

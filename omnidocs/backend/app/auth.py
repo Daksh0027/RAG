@@ -34,7 +34,9 @@ async def get_current_user_id(
         # Get unverified header to extract the kid (Key ID)
         unverified_header = jwt.get_unverified_header(token)
         kid = unverified_header.get("kid")
+        logger.info(f"Auth attempt: token kid={kid}")
         if not kid:
+            logger.warning("Auth failed: Token is missing Key ID (kid)")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token is missing Key ID (kid)",
@@ -94,14 +96,15 @@ async def get_current_user_id(
     except HTTPException:
         raise
     except jwt.ExpiredSignatureError:
+        logger.warning("Auth failed: Session has expired")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session has expired. Please sign in again.",
         )
     except jwt.InvalidTokenError as e:
+        logger.warning("Auth failed: Invalid token - %s", e)
         # Log the specific reason; return a generic message so token internals
         # and validation specifics aren't disclosed to the caller.
-        logger.warning("Rejected invalid token: %s", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication failed. Please sign in again.",
