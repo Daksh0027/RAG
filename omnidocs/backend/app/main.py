@@ -69,9 +69,21 @@ app.add_middleware(SlowAPIMiddleware)
 
 # Routers are imported after `app` exists to keep the import graph obvious.
 from .routers import documents, chat, workspaces  # noqa: E402
+from .recreate_db import recreate_database
 
 # Include routers
 app.include_router(documents.router)
+
+@app.get("/api/admin/reset-db")
+async def reset_database_endpoint():
+    """Temporary endpoint to reset the database schema. DELETE AFTER USE."""
+    try:
+        recreate_database()
+        return {"status": "success", "message": "Database schema recreated successfully!"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}, 500
+
+app.include_router(chat.router)
 app.include_router(chat.router)
 app.include_router(workspaces.router)
 
