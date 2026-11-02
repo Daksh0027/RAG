@@ -3,7 +3,7 @@ import os
 import json
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, Request, Response, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from slowapi import Limiter, _rate_limit_exceeded_handler
