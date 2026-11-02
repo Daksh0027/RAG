@@ -20,6 +20,7 @@ from ..config import settings
 from ..models import Document, DocumentChunk
 from ..database import SessionLocal
 from ..services.llm import llm
+from supabase import create_client, Client
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,9 @@ class RedisEmbeddingCache:
 
 
 _embedding_cache = RedisEmbeddingCache(redis_url=settings.REDIS_URL)
+
+# Supabase client for background downloads
+supabase: Client = create_client(settings.NEXT_PUBLIC_SUPABASE_URL, settings.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY)
 
 
 def _text_hash(text: str) -> str:
