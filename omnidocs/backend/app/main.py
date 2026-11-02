@@ -69,7 +69,14 @@ app.add_middleware(SlowAPIMiddleware)
 
 # Routers are imported after `app` exists to keep the import graph obvious.
 from .routers import documents, chat, workspaces  # noqa: E402
-from .recreate_db import recreate_database
+try:
+    from ..recreate_db import recreate_database
+except (ImportError, ValueError):
+    # Fallback for different execution contexts
+    import sys
+    import os
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+    from recreate_db import recreate_database
 
 # Include routers
 app.include_router(documents.router)
